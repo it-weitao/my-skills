@@ -21,15 +21,15 @@ type Action =
   | { type: 'ACTION_C'; ... };
 
 // 核心 reducer：纯函数，输入 state + action → 输出 new state
-const reducer = (state: State, action: Action, context: Context): State => {
+const reducer = (state: State, action: Action): State => {
   switch (action.type) {
     case 'ACTION_A':
       // 完整的状态流转逻辑
-      const step1 = processStep1(state, action.payload, context);
-      const step2 = processStep2(step1, context);
+      const step1 = processStep1(state, action.payload);
+      const step2 = processStep2(step1, action.payload);
       return step2;
     case 'ACTION_B':
-      return processActionB(state, action.payload, context);
+      return processActionB(state, action.payload);
     default:
       return state;
   }
@@ -103,6 +103,55 @@ const fetchBusinessFlow = async (
 - 避免在多处直接调用 `setState`
 - 中间状态可观测
 
+### 7. Reducer vs Flow 函数
+
+**判断标准：如果需要 mock 才能测试，提取为 flow 函数；否则在 reducer 中处理。**
+
+| 场景 | 处理方式 | 示例 |
+|------|----------|------|
+| **纯计算（同步、无副作用）** | 直接在 reducer 中 | 位置计算、贴边判断、数据转换 |
+| **含副作用的流程** | 提取为 flow 函数 | HTTP 请求、DOM 操作、存储读写 |
+
+```typescript
+// ✅ 正确：纯计算在 reducer 中
+const reducer = (state: State, action: Action): State => {
+  switch (action.type) {
+    case 'DRAG_END': {
+      // 1. 计算原始位置
+      const raw = calculateRaw(state, action.payload);
+      // 2. 约束边界
+      const constrained = constrainToBounds(raw);
+      // 3. 判断贴边
+      const edge = shouldSnapToEdge(constrained);
+      // 4. 应用贴边
+      const final = snapToEdge(constrained, edge);
+      return { ...state, position: final };
+    }
+  }
+};
+
+// ✅ 正确：含副作用提取为 flow 函数
+const fetchUserFlow = async (
+  [state, dispatch]: [State, Dispatch],
+  deps: { fetch: (url: string) => Promise<Data> }
+): Promise<void> => {
+  const data = await deps.fetch('/api/user');
+  dispatch({ type: 'SUCCESS', payload: data });
+};
+```
+
+```typescript
+// ❌ 错误：将纯计算提取为 flow 函数（过度抽取）
+const dragEndFlow = (
+  [state, dispatch]: [State, Dispatch],
+  deps: {}  // 空 deps，说明不需要副作用
+): void => {
+  const raw = calculateRaw(state);
+  const constrained = constrainToBounds(raw);
+  dispatch({ type: 'UPDATE', payload: constrained });
+};
+```
+
 ## 代码模板
 
 ```typescript
@@ -110,7 +159,6 @@ const fetchBusinessFlow = async (
 
 type State = Readonly<{ ... }>;
 type Action = { type: '...' } | { type: '...' };
-type Context = Readonly<{ ... }>;
 
 // ==================== 纯函数 ====================
 
@@ -123,6 +171,14 @@ const reducer = (state: State, action: Action): State => {
   switch (action.type) {
     case 'SUCCESS':
       return { ...state, ...action.payload };
+    case 'DRAG_END': {
+      // 纯计算逻辑直接在 reducer 中处理
+      const raw = calculateRaw(state, action.payload);
+      const constrained = constrainToBounds(raw);
+      const edge = shouldSnapToEdge(constrained);
+      const final = snapToEdge(constrained, edge);
+      return { ...state, position: final };
+    }
     default:
       return state;
   }
@@ -203,6 +259,16 @@ const businessFlow = async (
   dispatch({ type: 'SUCCESS', payload: data });
 };
 
+// ❌ 错误：将纯计算提取为 flow 函数（过度抽取）
+const dragEndFlow = (
+  [state, dispatch]: [State, Dispatch],
+  deps: {}  // 空 deps，说明不需要副作用！应该放在 reducer 中
+): void => {
+  const raw = calculateRaw(state);
+  const constrained = constrainToBounds(raw);
+  dispatch({ type: 'UPDATE', payload: constrained });
+};
+
 // ✅ 正确：业务流程注入副作用
 const businessFlow = async (
   [state, dispatch]: [State, Dispatch],
@@ -210,6 +276,17 @@ const businessFlow = async (
 ) => {
   const data = await deps.fetch('/api/data');  // 注入的
   dispatch({ type: 'SUCCESS', payload: data });
+};
+
+// ✅ 正确：纯计算直接在 reducer 中
+const reducer = (state: State, action: Action): State => {
+  switch (action.type) {
+    case 'DRAG_END': {
+      const raw = calculateRaw(state, action.payload);
+      const constrained = constrainToBounds(raw);
+      return { ...state, position: constrained };
+    }
+  }
 };
 ```
 
